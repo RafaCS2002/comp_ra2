@@ -57,10 +57,7 @@ class SimpleNode:
     def __init__(self, value=None):
         self.value = value
         self.children = []
-
-    def add_child(self, child):
-        self.children.append(child)
-
+    
     def __repr__(self, level=0, prefix="", is_last=True):
         # Print the node value with tree-like connectors
         lines = []
@@ -80,12 +77,16 @@ class SimpleNode:
             lines.append(child.__repr__(level + 1, child_prefix, last))
         return "\n".join(lines)
 
+    def add_child(self, child):
+        self.children.append(child)
+
+
 def draw_tree(node, graph=None, parent_id=None, counter=[0]):
     if graph is None:
         graph = Digraph()
-    node_id = f"{node.type}_{counter[0]}"
+    node_id = f"{node.value}_{counter[0]}"
     counter[0] += 1
-    graph.node(node_id, f"{node.type}\n{node.value}")
+    graph.node(node_id, f"{node.value}")
     if parent_id:
         graph.edge(parent_id, node_id)
     for child in node.children:
@@ -348,6 +349,9 @@ def sintaxAnalysis(tokens, numero_linha=0):
                     else:
                         error_sintax_log += f"Erro na linha {numero_linha}, coluna {lastNode.get_value()[2]}: {lastNode.get_value()[1]}.\n"
                         break
+                elif before.get_type() == "PAR_INI":
+                    endNode.set_type("NUM")
+                    nodeStack.append(endNode)
                 else:
                     error_sintax_log += f"Erro de sintaxe: 'mem' deve ser precedido por um número na linha {numero_linha}.\n"
                     break
@@ -399,34 +403,43 @@ def sintaxAnalysis(tokens, numero_linha=0):
                     break
             
             elif endNode.get_type() == "KW":
-                before01 = nodeStack.pop()
-                type01 = before01.get_type()
-                before02 = nodeStack.pop()
-                type02 = before02.get_type()
-                before03 = nodeStack.pop()
-                type03 = before03.get_type()
-                if type01 == "NUM":
-                    if (type02 == "NUM" or type02 == "MEM"):
-                        if type03 == "BOOL":
-                            lastNode = nodeStack.pop()
-                            if lastNode.get_type() == "PAR_INI":
-                                endNode.add_child(before01)
-                                endNode.add_child(before02)
-                                endNode.add_child(before03)
-                                endNode.set_type("NUM")
-                                nodeStack.append(endNode)
+                if len(nodeStack) >=4:
+                    before01 = nodeStack.pop()
+                    type01 = before01.get_type()
+                    before02 = nodeStack.pop()
+                    type02 = before02.get_type()
+                    before03 = nodeStack.pop()
+                    type03 = before03.get_type()
+                    if type01 == "NUM":
+                        if (type02 == "NUM" or type02 == "MEM"):
+                            if type03 == "BOOL":
+                                lastNode = nodeStack.pop()
+                                if lastNode.get_type() == "PAR_INI":
+                                    endNode.add_child(before01)
+                                    endNode.add_child(before02)
+                                    endNode.add_child(before03)
+                                    endNode.set_type("NUM")
+                                    nodeStack.append(endNode)
+                                else:
+                                    error_sintax_log += f"Erro na linha {numero_linha}, coluna {lastNode.get_value()[2]}: {lastNode.get_value()[1]}.\n"
+                                    break
                             else:
-                                error_sintax_log += f"Erro na linha {numero_linha}, coluna {lastNode.get_value()[2]}: {lastNode.get_value()[1]}.\n"
+                                error_sintax_log += f"Erro de sintaxe: o primeiro item deve ser uma Comparação na linha {numero_linha}, coluna {before03.get_value()[2]}.\n"
                                 break
                         else:
-                            error_sintax_log += f"Erro de sintaxe: o primeiro item deve ser uma Comparação na linha {numero_linha}, coluna {before03.get_value()[2]}.\n"
+                            error_sintax_log += f"Erro de sintaxe: o segundo item deve ser uma Número/Operação na linha {numero_linha}, coluna {before02.get_value()[2]}.\n"
                             break
                     else:
-                        error_sintax_log += f"Erro de sintaxe: o segundo item deve ser uma Número/Operação na linha {numero_linha}, coluna {before02.get_value()[2]}.\n"
+                        error_sintax_log += f"Erro de sintaxe: o terceiro item deve ser uma Número/Operação na linha {numero_linha}, coluna {before01.get_value()[2]}.\n"
                         break
                 else:
-                    error_sintax_log += f"Erro de sintaxe: o terceiro item deve ser uma Número/Operação na linha {numero_linha}, coluna {before01.get_value()[2]}.\n"
-                    break
+                    kw_value = endNode.get_value()[1]
+                    if kw_value == "if":
+                        error_sintax_log += f"Erro de sintaxe: Estrutura '{kw_value}' deve conter pelo menos 3 itens na linha {numero_linha}, ([Condição] [Valor Se Verdade] [Valor Se Falso] {kw_value}).\n"
+                        return [], error_sintax_log
+                    else:
+                        error_sintax_log += f"Erro de sintaxe: Estrutura '{kw_value}' deve conter pelo menos 3 itens na linha {numero_linha}, ([Critério de Parada] [Incremento] [Operação] {kw_value}).\n"
+                        return [], error_sintax_log
             else:
                 error_sintax_log += f"Erro de sintaxe: Parênteses fechados sem correspondência na linha {numero_linha}.\n"
                 return [], error_sintax_log
@@ -642,7 +655,7 @@ def processar_arquivo(nome_arquivo):
         linhas = f.readlines()
 
     for idx, linha in enumerate(linhas):
-        
+        # print(f"Processando linha {idx+1}: {linha}")
         error_lex = False
         error_sint = False
 
@@ -669,7 +682,11 @@ def processar_arquivo(nome_arquivo):
                 # FULL LOG DE ANALISE SINTATICA
                 full_log += f"\n\nAnálise Sintática:"
                 full_log += f"\n{node}"
-                full_log += f"\n{simplify_node(node)}"
+                simplerNode = simplify_node(node)
+                full_log += f"\n{simplerNode}"
+                print(simplerNode.value)
+                graph = draw_tree(simplerNode)
+                graph.render(f"tree_output/line{idx+1}", format="png", cleanup=True)
                 
         RES += 1
     
