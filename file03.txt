@@ -1,6 +1,1 @@
-(for (i) in range(MEM) then ((2 += i) MEM))
-(for (i) in range(5) then ((2 i +) MEM))
-(for (i) in range(5.5) then ((2 i +) MEM))
-(for (i e) in range(MEM) then (2 i +))
-(for (i 3) in range(MEM) then (2 i +))
-(for (i) in range(MEM) then (2 i +))
+(1 RES)
