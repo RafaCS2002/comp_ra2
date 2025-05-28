@@ -50,7 +50,7 @@ def evaluate_rpn(tokens, linestack, lineResult):
         if isinstance(token, list) and token[1]=="RES":  # caso (N RES)
             line = int(token[0]) - 1
             if line <= RES:
-                linestack.append(lineResult[line][1])
+                linestack.append(lineResult[line][2])
 
             else:
                 return None 
@@ -65,9 +65,9 @@ def evaluate_rpn(tokens, linestack, lineResult):
             
 
         elif token == "MEM":
-            if is_calculable_mem(tokens, i): #recupera valor
+            if is_calculable(tokens, i): #recupera valor
                 if MEM != None:
-                    linestack.append(lineResult[MEM][1])
+                    linestack.append(lineResult[MEM][2])
 
                 else:                           # caso (V MEM)
                     linestack.append(0)
@@ -149,34 +149,25 @@ def extract_parentheses_content(tokens):
     """
     Extracts the content inside parentheses, including handling nested cases.
     """
-    stack = []
-    result = []
-    current = []
-
+    stack = [[]]  # Stack to manage nested lists
     for token in tokens:
         if token == '(':
-            current = []
-            if current:
-                stack.append(current)
+            # Start a new list for nested parentheses
+            stack.append([])
         elif token == ')':
-            if stack:
-                temp = current
-                current = stack.pop()
-                current.append(temp)
-            else:
-                result.append(current)
-                current = []
+            # Close the current list and add it to the previous level
+            if len(stack) == 1:
+                raise ValueError("Unmatched closing parenthesis.")
+            completed = stack.pop()
+            stack[-1].append(completed)
         else:
-            current.append(token)
-
-    if current:
-        if len(current) == 1:
-            result.append(current[0])
-        else:   
-            result.append(current)
+            # Add the token to the current list
+            stack[-1].append(token)
     
-    print(result)
-    return result
+    if len(stack) != 1:
+        raise ValueError("Unmatched opening parenthesis.")
+    
+    return stack[0][0]
 
 def apply_lower_to_tokens(tokens):
     """
@@ -370,7 +361,8 @@ def processar_arquivo(nome_arquivo):
             classified_tokens = classify_tokens(tokens)
 
             tokens = extract_parentheses_content(tokens)
-
+            
+            
             full_log += ("\n" + str(linha) + str(tokens) + "\n" + "")
             for i in range(len(classified_tokens)): 
                 posText = token_index[i]
@@ -394,11 +386,10 @@ def processar_arquivo(nome_arquivo):
                     output += f"Erro sintático na linha {idx+1}: {msg}\n"
                     lineResult.append([tokens,msg,None])
                 else:
-                    lineResult.append([tokens,"OK"])
                     output += str(linha)
                     output += "OK\n"
-                    # linestack, result = evaluate_rpn(tokens, linestack, lineResult)
-                    # lineResult.append([result])
+                    linestack, result = evaluate_rpn(tokens, linestack, lineResult)
+                    lineResult.append([tokens,"OK",linestack])
         except Exception as e:
             lineResult.append([None, None, None])
 
