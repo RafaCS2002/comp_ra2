@@ -179,9 +179,8 @@ def lexAnalysis(linha,numero_linha=0):
     pos = 0
     
     while pos < len(linha):
-        # if numero_linha == 8:
-        #     print(f"Debugging linha {numero_linha}: {linha}")
-        #     print(f"Posição atual: {pos}, Caractere atual: '{linha[pos]}'")
+        # if numero_linha == 1:
+        #     print(f"Linha: {numero_linha}; Posição atual: {pos}, Caractere atual: '{linha[pos]}', Parênteses iniciados: {par_ini}, Parênteses fechados: {par_end}")
         char = linha[pos]
 
         if char.isspace():
@@ -191,7 +190,7 @@ def lexAnalysis(linha,numero_linha=0):
         elif char.isdigit() or char == '.' or (char == '-' and (linha[pos+1].isdigit() or ((linha[pos+1] == '.') and linha[pos+2].isdigit()))): # Números (inteiros e floats)
             start = pos
             num = ""
-            while pos < len(linha) and (linha[pos]!=" "):
+            while pos < len(linha) and linha[pos]!=" ":
                 num += linha[pos]
                 pos += 1
             tokens.append(("NUM", num, start))
@@ -305,6 +304,8 @@ def sintaxAnalysis(tokens, numero_linha=0):
 
     pos = 0
     while pos < len(tokens):
+        # if numero_linha == 1:
+        #     print(f"Linha: {numero_linha}; Posição atual: {pos}, Token atual: {tokens[pos]}")
         tokenClass = tokens[pos][0]
         
         if tokenClass == "PAR_INI":
@@ -665,6 +666,11 @@ def processar_arquivo(nome_arquivo):
             linha = linha[:-1]
 
         tokens, line_error_log = lexAnalysis(linha,idx+1)
+        # if idx+1 == 1:
+        #     print(f"Linha {idx+1}: {linha}")
+        #     for token in tokens:
+        #         print(f"Linha {idx+1}, Coluna {token[2]}: Token '{token[1]}'; Classe '{token[0]}'")
+        #     print(f"Erro Léxico: {line_error_log}")
 
         if tokens == []:
             error_lex = True
