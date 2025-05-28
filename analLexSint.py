@@ -80,7 +80,6 @@ class SimpleNode:
     def add_child(self, child):
         self.children.append(child)
 
-
 def draw_tree(node, graph=None, parent_id=None, counter=[0]):
     if graph is None:
         graph = Digraph()
@@ -89,17 +88,17 @@ def draw_tree(node, graph=None, parent_id=None, counter=[0]):
     graph.node(node_id, f"{node.value}")
     if parent_id:
         graph.edge(parent_id, node_id)
-    for child in node.children:
+    for child in reversed(node.children):
         draw_tree(child, graph, node_id, counter)
     return graph
 
+# --------------------- CODES USED ---------------------
 def is_float(value):
     try:
         float(value)
         return True
     except ValueError:
         return False
-
 
 def is_calculable(tokens, index):
     try: 
@@ -180,13 +179,16 @@ def lexAnalysis(linha,numero_linha=0):
     pos = 0
     
     while pos < len(linha):
+        # if numero_linha == 8:
+        #     print(f"Debugging linha {numero_linha}: {linha}")
+        #     print(f"Posição atual: {pos}, Caractere atual: '{linha[pos]}'")
         char = linha[pos]
 
         if char.isspace():
             pos += 1
             continue
 
-        elif char.isdigit() or char == '.': # Números (inteiros e floats)
+        elif char.isdigit() or char == '.' or (char == '-' and (linha[pos+1].isdigit() or ((linha[pos+1] == '.') and linha[pos+2].isdigit()))): # Números (inteiros e floats)
             start = pos
             num = ""
             while pos < len(linha) and (linha[pos]!=" "):
@@ -671,7 +673,7 @@ def processar_arquivo(nome_arquivo):
             # FULL LOG DE ANALISE LEXICA
             full_log += f"\n\nLinha {idx+1}: {linha}"
             for token in tokens:
-                full_log += f"\n{token}"
+                full_log += f"\nLinha {idx+1}, Coluna {token[2]}: Token '{token[1]}'; Classe '{token[0]}'"
 
         if not error_lex:
             node, line_error_log = sintaxAnalysis(tokens, idx+1)
@@ -681,10 +683,9 @@ def processar_arquivo(nome_arquivo):
             else:
                 # FULL LOG DE ANALISE SINTATICA
                 full_log += f"\n\nAnálise Sintática:"
-                full_log += f"\n{node}"
+                # full_log += f"\n{node}"
                 simplerNode = simplify_node(node)
                 full_log += f"\n{simplerNode}"
-                print(simplerNode.value)
                 graph = draw_tree(simplerNode)
                 graph.render(f"tree_output/line{idx+1}", format="png", cleanup=True)
                 
