@@ -9,6 +9,6 @@
 (-5.1 2 +)
 (-5.1 -2 - )
 (1 RES)
-((MEM 3 >=) (2 MEM) (20 MEM) IF)
+((MEM 3 >=) (2.2 MEM) (20 MEM) IF)
 (2 RES)
 ((5 MEM >=) 1 (1 MEM +) for )

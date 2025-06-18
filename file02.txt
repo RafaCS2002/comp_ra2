@@ -11,3 +11,5 @@
 ((5 MEM +) for )
 (5 1 (1 MEM +) for )
 ((MEM 9 >=) (MEM) (2 MEM *) FOR)
+((200 100 |) MEM)
+((2 RES) MEM *)

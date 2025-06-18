@@ -17,6 +17,16 @@
 # ( NUM NUM CMP ) - BOOL
 # ( BOOL NUM NUM KW ) - NUM
 #
+# Regras de inferencia de semantica:
+# ( NUM ) - int/float
+# ( MEM ) - mem
+# ( NUM/MEM RES ) - res
+# ( NUM MEM ) - mem
+# ( int/float/res/mem int/float/res/mem OP ) - int/float (se for | retorna float; se for / retorna int; se tiver mem ou res retorna float)
+# ( int/float/res/mem int/float/res/mem CMP ) - bool
+# ( bool int/float/mem/res int/float/mem/res if ) - int/float
+# ( bool int/res(round value to int)/mem(round value to int) int/float for ) - int/float
+#
 
 import sys
 import re
@@ -24,18 +34,20 @@ import time
 from graphviz import Digraph
 
 # VARIAVEIS GLOBAIS
-MEM = None  # armazena posicao no historico
+MEM = 0.0  # armazena valor
 RES = 0     # contador de expressoes processadas
 debug_output = ""  # salva linha e resultado em float
 
 class Node:
     def __init__(self, type_, value=None, children=None):
         self.type = type_
+        self.semType = None  # Tipo semântico, a ser definido na análise semântica
         self.value = value
+        self.primary = True 
         self.children = children if children else []
 
     def __repr__(self, level=0):
-        ret = "\t"*level + f"{self.type}: {self.value}\n"
+        ret = "\t"*level + f"{self.type}: {self.value} - Semantic: {self.semType} - Primary: {self.primary}\n"
         for child in self.children:
             ret += child.__repr__(level + 1)
         return ret
@@ -46,10 +58,18 @@ class Node:
         return self.value
     def get_children(self):
         return self.children
+    def get_semType(self):
+        return self.semType
+    def is_primary(self):
+        return self.primary
     def set_type(self, type_):
         self.type = type_
+    def set_primary(self, primary):
+        self.primary = primary
     def set_value(self, value):
         self.value = value
+    def set_semType(self, value):
+        self.semType = value
     def add_child(self, child):
         self.children.append(child) 
 
@@ -169,7 +189,7 @@ def evaluate_rpn(tokens, linestack, lineResult):
 
     return linestack, r
 
-# separa tokens RPN aninhados, incluindo parenteses
+# -------------------- ANALISADORES --------------------
 
 def lexAnalysis(linha,numero_linha=0):
     error_lex_log = ""
@@ -179,8 +199,6 @@ def lexAnalysis(linha,numero_linha=0):
     pos = 0
     
     while pos < len(linha):
-        # if numero_linha == 1:
-        #     print(f"Linha: {numero_linha}; Posição atual: {pos}, Caractere atual: '{linha[pos]}', Parênteses iniciados: {par_ini}, Parênteses fechados: {par_end}")
         char = linha[pos]
 
         if char.isspace():
@@ -461,171 +479,119 @@ def sintaxAnalysis(tokens, numero_linha=0):
 
     return nodeStack[0], error_sintax_log
 
-def extract_parentheses_content(tokens):
-    """
-    Extracts the content inside parentheses, including handling nested cases.
-    """
-    stack = [[]]  # Stack to manage nested lists
-    for token in tokens:
-        if token == '(':
-            # Start a new list for nested parentheses
-            stack.append([])
-        elif token == ')':
-            # Close the current list and add it to the previous level
-            if len(stack) == 1:
-                raise ValueError("Unmatched closing parenthesis.")
-            completed = stack.pop()
-            stack[-1].append(completed)
-        else:
-            # Add the token to the current list
-            stack[-1].append(token)
-    
-    if len(stack) != 1:
-        raise ValueError("Unmatched opening parenthesis.")
-    
-    return stack[0][0]
+def semanticAnalysis(node, error_sint=False):
+    line_error_log = ""
+    if error_sint:
+        return None, line_error_log, True
 
-def apply_lower_to_tokens(tokens):
-    """
-    Applies the lower() method to each token in the list.
-    """
-    return [token.lower() if isinstance(token, str) else token for token in tokens]
+    def _sem(node):
+        nonlocal line_error_log, error_sint
+        if node is None or error_sint:
+            return
 
-def is_number(x):
-    try:
-        float(x)
-        return True
-    except:
-        return False
+        for child in node.get_children():
+            _sem(child)
+            if error_sint:
+                return
 
-def check_number_type(x):
-    """
-    Verifica se o número em uma string é um inteiro ou um float.
-    Retorna 'int' se for inteiro, 'float' se for float, ou None se não for um número.
-    """
-    try:
-        if '.' in x or 'e' in x.lower():
-            float(x)
-            return 'float'
-        else:
-            int(x)
-            return 'int'
-    except ValueError:
-        return None
+        children = node.get_children()
+        if children and any(child.get_semType() is None for child in children):
+            return
 
-def validate_condition(condicao):
-    """
-    Valida a condição de um bloco 'if', incluindo comparações como ['mem', '>=', '3'].
-    """
-    if not isinstance(condicao, list) or len(condicao) != 3:
-        return False, f"Condição inválida: {condicao}. Esperado formato [A operador B]."
+        tclass = node.value[0] if isinstance(node.value, (tuple, list)) and len(node.value) > 0 else None
+        tval = node.value[1] if isinstance(node.value, (tuple, list)) and len(node.value) > 1 else None
 
-    a, operador, b = condicao
-
-    if operador not in comparators:
-        return False, f"Operador inválido na condição: {operador}."
-
-    a_valido = is_number(a) or a in valid_for_variables or a == 'mem'
-    b_valido = is_number(b) or b in valid_for_variables or b == 'mem'
-
-    if not a_valido:
-        return False, f"Operando esquerdo inválido na condição: {a}."
-    if not b_valido:
-        return False, f"Operando direito inválido na condição: {b}."
-
-    return True, ""
-
-def validate_range_condition(condicao):
-    """
-    Valida a condição de um range, que deve ser uma lista contendo 'mem' ou um número inteiro.
-    """
-    if not isinstance(condicao, list) or len(condicao) != 1:
-        return False, f"Condição de range inválida: {condicao}. Esperado formato ['valor']."
-
-    valor = condicao[0]
-
-    if valor == 'mem':
-        return True, ""
-    
-    if is_number(valor) and check_number_type(valor) == 'int':
-        return True, ""
-    
-    return False, f"Condição de range inválida: {valor}. Esperado 'mem' ou um número inteiro."
-
-def validate_expression(expr):
-    if not isinstance(expr, list):
-        return False, "Expressão deve ser uma lista."
-
-    # MEM simples
-    if len(expr) == 1 and expr[0] == 'mem':
-        return True, ""
-
-    # (N RES) ou (V MEM)
-    if len(expr) == 2:
-        if is_number(expr[0]) or (isinstance(expr[0], list) and validate_expression(expr[0])[0]) and expr[1] in ['res', 'mem']:
-            return True, ""
-        return False, f"Expressão inválida: {expr}. Esperado (N RES) ou (V MEM)."
-
-    # Expressão aritmética binária (A B op)
-    if len(expr) == 3:
-        a, b, op = expr
-        if op not in valid_operators:
-            return False, f"Operador inválido: {op}."
-        if not (is_number(a) or (isinstance(a, list) and validate_expression(a)[0]) or a in valid_for_variables or a == 'mem'):
-            return False, f"Operando esquerdo inválido: {a}."
-        if not (is_number(b) or (isinstance(b, list) and validate_expression(b)[0]) or b in valid_for_variables or b == 'mem'):
-            return False, f"Operando direito inválido: {b}."
-        return True, ""
-
-    # Estrutura if-then-(else opcional)
-    if len(expr) >= 4 and expr[0] == 'if':
-        try:
-            condicao = expr[1]
-            if expr[2] != 'then':
-                return False, f"Palavra-chave 'then' ausente na expressão: {expr}."
-            bloco_then = expr[3]
-            condicao_valida, condicao_msg = validate_condition(condicao)
-            if not condicao_valida:
-                return False, condicao_msg
-            if isinstance(bloco_then, list):
-                if not validate_expression(bloco_then)[0]:
-                    return False, f"Bloco 'then' inválido: {bloco_then}."
+        if tclass == "NUM":
+            if "." in tval:
+                node.set_semType("float")
             else:
-                return False, f"Bloco 'then' deve ser uma lista: {bloco_then}."
-
-            # Verifica se existe um bloco 'else' e valida
-            if len(expr) > 4 and expr[4] == 'else':
-                bloco_else = expr[5]
-                if isinstance(bloco_else, list):
-                    if not validate_expression(bloco_else)[0]:
-                        return False, f"Bloco 'else' inválido: {bloco_else}."
+                node.set_semType("int")
+        elif tclass == "MEM" and not children:
+            node.set_semType("mem")
+        elif tclass == "RES":
+            if len(children) == 1 and children[0].get_semType() in ("int", "float", "mem"):
+                node.set_semType("res")
+            else:
+                line_error_log += f"Erro semântico: (NUM/MEM RES) esperado, obtido filhos: {[c.get_semType() for c in children]}"
+                error_sint = True
+        elif tclass == "MEM":
+            if len(children) == 1 and children[0].get_semType() in ("int", "float"):
+                node.set_semType("mem")
+            else:
+                line_error_log += f"Erro semântico: (NUM MEM) esperado, obtido filhos: {[c.get_semType() for c in children]}"
+                error_sint = True
+        elif tclass == "OP":
+            if len(children) == 2:
+                left, right = children[0], children[1]
+                sems = (left.get_semType(), right.get_semType())
+                if sems[0] in ("int", "float", "res", "mem") and sems[1] in ("int", "float", "res", "mem"):
+                    if tval == "|":
+                        node.set_semType("float")
+                    elif tval == "/":
+                        node.set_semType("int")
+                    elif "mem" in sems or "res" in sems:
+                        node.set_semType("float")
+                    elif sems[0] == "float" or sems[1] == "float":
+                        node.set_semType("float")
+                    else:
+                        node.set_semType("int")
                 else:
-                    return False, f"Bloco 'else' deve ser uma lista: {bloco_else}."
+                    line_error_log += f"Erro semântico: (int/float/res/mem int/float/res/mem OP) esperado, obtido filhos: {sems}"
+                    error_sint = True
+            else:
+                line_error_log += f"Erro semântico: (int/float/res/mem int/float/res/mem OP) esperado, quantidade de filhos: {len(children)}"
+                error_sint = True
+        elif tclass == "CMP":
+            if len(children) == 2:
+                left, right = children[0], children[1]
+                sems = (left.get_semType(), right.get_semType())
+                if sems[0] in ("int", "float", "res", "mem") and sems[1] in ("int", "float", "res", "mem"):
+                    node.set_semType("bool")
+                else:
+                    line_error_log += f"Erro semântico: (int/float/res/mem int/float/res/mem CMP) esperado, obtido filhos: {sems}"
+                    error_sint = True
+            else:
+                line_error_log += f"Erro semântico: (int/float/res/mem int/float/res/mem CMP) esperado, quantidade de filhos: {len(children)}"
+                error_sint = True
+        elif tclass == "KW":
+            if len(children) == 3:
+                cond, v1, v2 = children[2], children[1], children[0]
+                if tval == "if":
+                    if cond.get_semType() == "bool" and v1.get_semType() in ("int", "float", "mem", "res") and v2.get_semType() in ("int", "float", "mem", "res"):
+                        if v1.get_semType() == "float" or v2.get_semType() == "float":
+                            node.set_semType("float")
+                        else:
+                            node.set_semType("int")
+                    else:
+                        line_error_log += f"Erro semântico: (bool int/float/mem/res int/float/mem/res if) esperado, obtido filhos: {[cond.get_semType(), v1.get_semType(), v2.get_semType()]}"
+                        error_sint = True
+                elif tval == "for":
+                    valid_first = cond.get_semType() == "bool"
+                    valid_second = v1.get_semType() in ("int", "res", "mem")
+                    valid_third = v2.get_semType() in ("int", "float")
+                    if valid_first and valid_second and valid_third:
+                        if v2.get_semType() == "float":
+                            node.set_semType("float")
+                        else:
+                            node.set_semType("int")
+                    else:
+                        line_error_log += f"Erro semântico: (bool int/res/mem int/float for) esperado, obtido filhos: {[cond.get_semType(), v1.get_semType(), v2.get_semType()]}"
+                        error_sint = True
+                else:
+                    line_error_log += f"Erro semântico: KW não reconhecido: {tval}\n"
+                    error_sint = True
+            else:
+                line_error_log += f"Erro semântico: (bool int/float/mem/res int/float/mem/res if) ou (bool int/res/mem int/float for) esperado, quantidade de filhos: {len(children)}"
+                error_sint = True
+        else:
+            node.set_semType(None)
 
-            return True, ""
-        except:
-            return False, f"Erro ao validar expressão 'if': {expr}."
+    _sem(node)
+    if error_sint:
+        return None, line_error_log, True
+    return node, line_error_log, False
 
-    # Estrutura for (i) in range(MEM) then bloco
-    if len(expr) >= 7 and expr[0] == 'for' and isinstance(expr[1], list) and len(expr[1]) == 1:
-        var = expr[1][0]
-        if var not in valid_for_variables:
-            return False, f"Variável de loop inválida: {var}."
-        if expr[2] != 'in' or expr[3] != 'range':
-            return False, f"Palavras-chave 'in range' ausentes ou inválidas na expressão: {expr}."
-        
-        range_valida, range_msg = validate_range_condition(expr[4])
-        if not range_valida:
-            return False, range_msg
-        
-        if expr[5] != 'then':
-            return False, f"Palavra-chave 'then' ausente na expressão: {expr}."
-        if not validate_expression(expr[6])[0]:
-            return False, f"Bloco 'then' inválido: {expr[6]}."
-        
-        return True, ""
-
-    return False, f"Expressão inválida ou não reconhecida: {expr}."
+# ------------------- OTHER CODES--------------------
 
 def simplify_node(node):
     if node is None:
@@ -645,6 +611,318 @@ def simplify_node(node):
 
     return novo_node
 
+def invert_tree(node):
+    if node is None:
+        return None
+
+    # Inverte os filhos do nó atual
+    inverted_children = [invert_tree(child) for child in reversed(node.get_children())]
+
+    # Cria um novo nó com o valor atual e os filhos invertidos
+    new_node = Node(node.get_type(), node.get_value(), inverted_children)
+    new_node.set_semType(node.get_semType())
+
+    return new_node
+
+def classfyPrimary(node):
+    if node is None:
+        return
+
+    children = node.get_children()
+    if children:
+        # Leftmost child is primary
+        children[0].set_primary(True)
+        # Rightmost child is secondary
+        if len(children) > 1:
+            children[1].set_primary(False)
+        # Recursively classify children
+        for child in children:
+            classfyPrimary(child)
+
+def writeASMoutput(body, arquivo_base="base.asm"):
+    with open(arquivo_base) as base_file:
+        codigo_base = base_file.read()
+
+    codigo_base += body
+
+    with open("assembly_out/saida.asm", "w") as out:
+        out.write(codigo_base)
+
+# -------------- ASM GENERATION FUNCTIONS --------------
+def extractIntRat(number):
+    # Extrai a parte inteira e a parte racional de um float como inteiros
+    integer_part = int(float(number))
+    fractional_part = abs(float(number) - integer_part)
+    # Considera até 4 casas decimais para a parte racional como inteiro
+    rational_as_int = int(round(fractional_part * 10000))
+    return integer_part, rational_as_int
+
+def loadNumberPrimary(value):
+    # Extrai a parte inteira e a parte racional de um float como inteiros
+    primaryInt, primaryRat = extractIntRat(value)
+
+    if '-' in value:
+        sign = "0b00000001"
+    else:
+        sign = "0b00000000"
+
+    body = f"""
+    ldi r19, high({primaryInt})
+    ldi r18, low({primaryInt})
+    ldi r17, high({primaryRat})
+    ldi r16, low({primaryRat})
+
+    ldi r24, {sign}  ; Carrega o sinal
+
+"""
+    return body
+
+def loadNumberSecondary(value):
+    # Extrai a parte inteira e a parte racional de um float como inteiros
+    secondaryInt, secondaryRat = extractIntRat(value)
+
+    
+    if '-' in value:
+        sign = "0b00000010"
+    else:
+        sign = "0b00000000"
+
+    body = f"""
+    ldi r23, high({secondaryInt})
+    ldi r22, low({secondaryInt})
+    ldi r21, high({secondaryRat})
+    ldi r20, low({secondaryRat})
+
+    ldi r24, {sign}  ; Carrega o sinal
+
+"""
+    return body
+
+def loadOperation(op):
+    if op == '+':
+        return "\n    call add_int_numbers\n"
+    elif op == '-':
+        return """
+    
+    call sign_inverter
+    call add_int_numbers
+
+"""
+    elif op == '*':
+        return "\n    call mul_int_numbers\n"
+    elif op == '/':
+        return "\n    call div_int_int_numbers\n"
+    elif op == '|':
+        return "\n    call div_real_int_numbers\n"
+    elif op == '%':
+        return "\n    call rest_numbers\n"
+    elif op == '^':
+        return "\n    call power_int_numbers\n"
+    else:
+        raise ValueError(f"Operação desconhecida: {op}")
+
+def pushPrimaryToStack():
+    body = """
+    
+    push r19  ; Parte inteira alta
+    push r18  ; Parte inteira baixa
+    push r17  ; Parte racional alta
+    push r16  ; Parte racional baixa
+    push r24  ; Sinal
+    
+    """
+    return body
+
+def popPrimaryFromStack():
+    body = """
+    
+    pop r25  ; Sinal
+    pop r16  ; Parte racional baixa
+    pop r17  ; Parte racional alta
+    pop r18  ; Parte inteira baixa
+    pop r19  ; Parte inteira alta
+
+    or r24, r25  ; Combina os sinais dos dois números
+
+    """
+    return body
+
+def pushSecondaryToStack():
+    body = """
+    
+    push r23  ; Parte inteira alta
+    push r22  ; Parte inteira baixa
+    push r21  ; Parte racional alta
+    push r20  ; Parte racional baixa
+    push r24  ; Sinal
+    
+    """
+    return body
+
+def popSecondaryFromStack():
+    body = """
+    
+    pop r24  ; Sinal
+    pop r20  ; Parte racional baixa
+    pop r21  ; Parte racional alta
+    pop r22  ; Parte inteira baixa
+    pop r23  ; Parte inteira alta
+    
+    """
+    return body
+
+
+def printResult():
+    body = popPrimaryFromStack()
+    body += """
+    
+    call send_sign_primary
+    call send_full_byte_decimal_primary
+    ldi r30, '|'
+    call send_char_call_no_Correction
+    clr r24
+
+    ; --------------------------
+    """
+    return body
+
+def endCode():
+    body = """
+    ldi r30, 13
+    call send_char_call_no_Correction
+    call delay
+    end_of_code_really:
+    rjmp end_of_code_really
+    """
+    return body
+# ------ Solver ------
+
+def solveExpression(node, lineResult):
+    # Recursively solve the expression tree bottom-up using value[1] for math
+    def solveExpressionRec(node, lineResult):
+        global MEM, RES
+        if node is None:
+            return "newBody", None
+
+        children = node.get_children()
+        # Leaf node: NUM or MEM or RES
+        if not children:
+            tval = node.get_value()[1]
+            tsem = node.get_semType()
+            if tsem == "int":
+                body = ""
+                if node.is_primary():
+                    body = loadNumberPrimary(tval)
+                    body += pushPrimaryToStack()
+                else:
+                    body = loadNumberSecondary(tval)
+                    body += pushSecondaryToStack()
+                return body, int(tval)
+            elif tsem == "float":
+                body = ""
+                if node.is_primary():
+                    body = loadNumberPrimary(tval)
+                    body += pushPrimaryToStack()
+                else:
+                    body = loadNumberSecondary(tval)
+                    body += pushSecondaryToStack()
+                return body, float(tval)
+            elif tsem == "mem":
+                body = ""
+                if node.is_primary():
+                    body = loadNumberPrimary(str(MEM))
+                    body += pushPrimaryToStack()
+                else:
+                    body = loadNumberSecondary(str(MEM))
+                    body += pushSecondaryToStack()
+                return body, float(MEM)
+            else:
+                return "", 0.0
+
+        tval = node.get_value()[1]
+        tclass = node.get_value()[0]
+        tsem = node.get_semType()
+
+        # Unary MEM/RES
+        if tsem == "mem" and len(children) == 1:
+            body, val = solveExpressionRec(children[0], lineResult)
+            MEM = float(val)
+            return body, MEM
+        if tsem == "res" and len(children) == 1:
+            RES = int(children[0].get_value()[2])-1
+            return "newBody", float(lineResult[RES][2])
+
+        # Binary OP/CMP
+        if tclass == "OP" and len(children) == 2:
+            bodyLeft, left = solveExpressionRec(children[0], lineResult)
+            bodyRight, right = solveExpressionRec(children[1], lineResult)
+            op = tval
+
+            body =  bodyLeft + bodyRight
+            
+            body += popSecondaryFromStack()
+            body += popPrimaryFromStack()
+            body += loadOperation(op)
+            body += pushPrimaryToStack()
+
+            if op == '+':
+                return body, left + right
+            elif op == '-':
+                return body, left - right
+            elif op == '*':
+                return body, left * right
+            elif op == '/':
+                return body, left / right if right != 0 else 0
+            elif op == '|':
+                return body, left / right if right != 0 else 0
+            elif op == '%':
+                return body, left % right if right != 0 else 0
+            elif op == '^':
+                return body, left ** right
+            else:
+                return body, 0
+            
+        if tclass == "CMP" and len(children) == 2:
+            bodyLeft, left = solveExpressionRec(children[0], lineResult)
+            bodyRight, right = solveExpressionRec(children[1], lineResult)
+            op = tval
+
+            if op == "==":
+                return "", (left == right)
+            elif op == "!=":
+                return "", (left != right)
+            elif op == "<":
+                return "", (left < right)
+            elif op == "<=":
+                return "", (left <= right)
+            elif op == ">":
+                return "", (left > right)
+            elif op == ">=":
+                return "", (left >= right)
+            else:
+                return "", False
+        
+        # KW (if, for)
+        if tclass == "KW" and len(children) == 3:
+            _, cond = solveExpressionRec(children[0], lineResult)
+            body01, v1 = solveExpressionRec(children[1], lineResult)
+            body02, v2 = solveExpressionRec(children[2], lineResult)
+            if tval == "if":
+                return (body01, v1) if cond else (body02, v2)
+
+            elif tval == "for":
+                
+                return "newBody", 0
+            else:
+                return "newBody", 0
+
+        # Fallback
+        return "newBody", 0
+
+    newBody, result = solveExpressionRec(node, lineResult)
+    newBody += printResult()  # Adiciona a impressão do resultado
+    return newBody, result
+
 # processa o arquivo txt
 def processar_arquivo(nome_arquivo):
     global RES
@@ -652,7 +930,8 @@ def processar_arquivo(nome_arquivo):
     full_log = ""
     error_lex_log = ""
     error_sint_log = ""
-    output = ""
+    error_sem_log = ""
+    codASM = ""
 
     with open(nome_arquivo) as f:
         linhas = f.readlines()
@@ -661,10 +940,12 @@ def processar_arquivo(nome_arquivo):
         # print(f"Processando linha {idx+1}: {linha}")
         error_lex = False
         error_sint = False
+        error_sem = False
 
         if linha[-1] == '\n':
             linha = linha[:-1]
 
+        # Análise Léxica
         tokens, line_error_log = lexAnalysis(linha,idx+1)
         # if idx+1 == 1:
         #     print(f"Linha {idx+1}: {linha}")
@@ -681,6 +962,7 @@ def processar_arquivo(nome_arquivo):
             for token in tokens:
                 full_log += f"\nLinha {idx+1}, Coluna {token[2]}: Token '{token[1]}'; Classe '{token[0]}'"
 
+        # Análise Sintática
         if not error_lex:
             node, line_error_log = sintaxAnalysis(tokens, idx+1)
             if node == []:
@@ -689,15 +971,38 @@ def processar_arquivo(nome_arquivo):
             else:
                 # FULL LOG DE ANALISE SINTATICA
                 full_log += f"\n\nAnálise Sintática:"
-                # full_log += f"\n{node}"
-                simplerNode = simplify_node(node)
-                full_log += f"\n{simplerNode}"
-                graph = draw_tree(simplerNode)
-                graph.render(f"tree_output/line{idx+1}", format="png", cleanup=True)
+                full_log += f"\n{node}"
+                # ARVORE SINTATICA
+                # simplerNode = simplify_node(node)
+                # full_log += f"\n{simplerNode}"
+                # graph = draw_tree(simplerNode)
+                # graph.render(f"tree_output/line{idx+1}", format="png", cleanup=True)
                 
-        RES += 1
+        # Análise Semântica
+        if not error_sint and not error_lex:
+            node, line_error_log, error_sem = semanticAnalysis(node,error_sem)
+            if node == None:
+                error_sem_log += line_error_log + " na linha " + str(idx+1) + ".\n"
+            else:
+                node = invert_tree(node)
+                classfyPrimary(node)  # Classifica os nós primários e secundários
+                # FULL LOG DE ANALISE SEMANTICA
+                full_log += f"\n\nAnálise Semântica:"
+                full_log += f"\n{node}"
     
-    return lineResult, full_log, error_lex_log, error_sint_log, output
+        # Resolução da expressão
+        if not error_lex and not error_sint and not error_sem:
+            
+            body, result = solveExpression(node, lineResult)
+
+            codASM += f"{body}\n\n"
+            # Armazena o resultado
+            lineResult.append((idx+1, linha, result))
+        RES += 1
+
+    codASM += endCode()  # Adiciona o código de finalização
+    writeASMoutput(codASM)
+    return lineResult, full_log, error_lex_log, error_sint_log, error_sem_log
 
 # main executa usando sys.argv ao inves de input
 if __name__ == "__main__":
@@ -706,7 +1011,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     nome_arquivo = sys.argv[1]
-    result, full_log, error_lex_log, error_sint_log, output = processar_arquivo(nome_arquivo)
+    result, full_log, error_lex_log, error_sint_log, error_sem_log = processar_arquivo(nome_arquivo)
 
     print("Resultados do processamento:")
     print(full_log)
@@ -714,12 +1019,9 @@ if __name__ == "__main__":
     print(error_lex_log)
     print("Erros Sintático:")
     print(error_sint_log)
-    # print(error_lex_log)
-    # print(output)
-    # for x in result:
-    #     print(f"Expr: {x[0]}\nMessage:{x[1]}\nResult:{x[2]}\n")
-
-    # print("Resultados em py:")
-    # for expr, val in debug_output:
-    #     print(f"{expr} = {val if isinstance(val, str) else f'{val:.4f}'}")
+    print("Erros Semântico:")
+    print(error_sem_log)
+    print("Resultados:")
+    for x in result:
+        print(f"\nLinha:{x[0]}\nExpr: {x[1]}\nResult:{x[2]}\n")
 
